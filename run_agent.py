@@ -28,10 +28,10 @@ def git(repo, *arguments, diff_exit_ok=False):
     return result.stdout
 
 
-def read_file(repo, name):
-    path = (repo / name).resolve()
-    if not path.is_relative_to(repo):
-        raise ValueError(f"File is outside the target repository: {name}")
+def read_file(target, name):
+    path = (target / name).resolve()
+    if not path.is_relative_to(target):
+        raise ValueError(f"File is outside the target folder: {name}")
     content = path.read_text(encoding="utf-8")
     if not content.strip():
         return ""
@@ -39,14 +39,18 @@ def read_file(repo, name):
     return f"File: {name}\n" + "\n".join(lines)
 
 
-def read_diff(repo, base, paths, log_path):
+def read_diff(target, base, paths, log_path):
+    for path in paths:
+        if not Path(os.path.abspath(target / path)).is_relative_to(target):
+            raise ValueError(f"--path is outside the target folder: {path}")
+
     options = ("--no-ext-diff", "--no-textconv", "--no-color")
-    patches = [git(repo, "diff", *options, base, "--", *paths)]
-    untracked = git(repo, "ls-files", "--others", "--exclude-standard", "-z", "--", *paths)
+    patches = [git(target, "diff", "--relative", *options, base, "--", *paths)]
+    untracked = git(target, "ls-files", "--others", "--exclude-standard", "-z", "--", *paths)
     for name in untracked.split("\0"):
-        if name and repo / name != log_path:
+        if name and target / name != log_path:
             patches.append(git(
-                repo, "diff", "--no-index", *options, "--", "/dev/null", f"./{name}",
+                target, "diff", "--no-index", *options, "--", "/dev/null", f"./{name}",
                 diff_exit_ok=True,
             ))
     return "".join(patches)
@@ -95,40 +99,41 @@ def review_changes(model, evidence, log):
 # Step 3: Run the CLI and log the result.
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", type=Path, required=True, help="Git repository to review")
+    parser.add_argument("--target", type=Path, required=True, help="Git repository or folder inside one to review")
     comparison = parser.add_mutually_exclusive_group()
     comparison.add_argument("--base", default="HEAD", help="Commit to compare against (default: HEAD)")
     comparison.add_argument("--baseline", action="store_true", help="Compare against an empty tree")
     parser.add_argument("--architecture", default="ARCHITECTURE.md", help="Architecture document relative to the target")
-    parser.add_argument("--path", action="append", default=[], help="Limit the diff to this file or directory (repeatable)")
-    parser.add_argument("--context", action="append", default=[], help="Include a related file (repeatable)")
+    parser.add_argument("--path", action="append", default=[], help="Limit the diff to a path relative to the target (repeatable)")
+    parser.add_argument("--context", action="append", default=[], help="Include a file relative to the target (repeatable)")
     parser.add_argument("--model", default="qwen3", help="Ollama model to use")
     parser.add_argument("--log-file", type=Path, default=Path("architecture-verifier.log"))
     parser.add_argument("--dry-run", action="store_true", help="Print the review input without calling the model")
     args = parser.parse_args()
 
     start = time.monotonic()
+    target = args.target.resolve()
     log = {
-        "target": str(args.target.resolve()),
+        "target": str(target),
         "model": args.model,
         "architecture": args.architecture,
         "paths": args.path,
         "context": args.context,
     }
     try:
-        repo = Path(git(args.target, "rev-parse", "--show-toplevel").rstrip("\n"))
+        repo = Path(git(target, "rev-parse", "--show-toplevel").rstrip("\n"))
         if args.baseline:
             base = git(repo, "hash-object", "-t", "tree", "--stdin").strip()
         else:
             base = git(repo, "rev-parse", "--verify", "--end-of-options", f"{args.base}^{{commit}}").strip()
         log["base"] = base
-        architecture = read_file(repo, args.architecture)
+        architecture = read_file(target, args.architecture)
         if not architecture:
             raise ValueError("The architecture document is empty. Add the applicable rules.")
-        diff = read_diff(repo, base, args.path, args.log_file.resolve())
+        diff = read_diff(target, base, args.path, args.log_file.resolve())
 
         if diff:
-            related = [read_file(repo, name) for name in args.context]
+            related = [read_file(target, name) for name in args.context]
             evidence = "\n\n".join(["Architecture rules", architecture, "Git diff", diff, *related])
             if len(evidence.encode("utf-8")) > 12_000:
                 raise ValueError("Review input is too large. Narrow --path or --context.")

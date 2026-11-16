@@ -20,17 +20,17 @@ The included `test_repo/` is a folder inside this Git repository. Run the follow
 
 ```sh
 python run_agent.py \
-  --target . --path test_repo --architecture test_repo/ARCHITECTURE.md --baseline --log-file ./logs/baseline.log
+  --target ./test_repo --baseline --log-file ./logs/baseline.log
 ```
 
 `--baseline` compares the selected files with an empty tree so a clean starting repository can be reviewed. A run without `--baseline` compares the working tree to `HEAD` and includes staged edits, unstaged edits, and non-ignored new files. Commit the starting files before reviewing edits without `--baseline`. Use `--base <commit>` to review against a specific commit.
 
 ```sh
 python run_agent.py \
-  --target . --path test_repo --architecture test_repo/ARCHITECTURE.md --log-file ./logs/iterative.log
+  --target ./test_repo --log-file ./logs/iterative.log
 ```
 
-Use `--path` to scope the diff to a file or directory and `--context` to include a related file such as a dependency or interface. Both options can be repeated. For a separate Git test repository with its own root-level `ARCHITECTURE.md`, pass its location as `--target`.
+Pass a Git repository or a folder within one as `--target`. The agent reads `ARCHITECTURE.md` from that folder and scopes the diff to it. Use `--path` to narrow the diff further and `--context` to include a related file. Both options accept paths relative to the target folder and can be repeated.
 
 Add `--dry-run` to see the exact repository content that would be sent to Ollama, without calling the model or writing a log. The CLI stops if the review input exceeds 12,000 bytes to leave room for the prompt and response in the local context window. Narrow the scope and rerun if needed.
 
